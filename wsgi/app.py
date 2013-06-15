@@ -79,7 +79,8 @@ def get_legal_buy_sell(html):
 emerging = {
   5221: u'合晶光電',
   4990: u'晶美應材',
-  4969: u'鑫晶鑽'
+  4969: u'鑫晶鑽',
+  5217: u'旭晶'
 }
 emer_result = {}
 emerging_url = "http://www.gretai.org.tw/storage/emgstk/emgstk.txt"
@@ -260,7 +261,7 @@ setTimeout(check, 1000); \n\
 </script>\n\
 </body></html>'
 
-order = [5483, 6182, 3579, 3519, 5221, 4990, 4969, 4944]
+order = [5483, 6182, 3579, 3519, 5221, 4990, 4969, 4944, 5217]
 entry = u'\n\
 <h6 who="{0[id]}">{0[name]}，代號: {0[id]}</h6>\n\
 <table border="1">\n\
