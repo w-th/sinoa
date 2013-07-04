@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*-coding:utf-8-*-
-import re, urllib2, datetime, json
+import re, urllib2, datetime, json, urllib
 from flask import Flask
 app = Flask(__name__)
 
@@ -80,7 +80,7 @@ emerging = {
   5221: u'合晶光電',
   4990: u'晶美應材',
   4969: u'鑫晶鑽',
-  5217: u'旭晶'
+  5217: u'旭泓'
 }
 emer_result = {}
 emerging_url = "http://www.gretai.org.tw/storage/emgstk/emgstk.txt"
@@ -168,6 +168,71 @@ def get_all():
     direction = "up"
   return dict(total=total.encode('utf-8'),delta=delta.encode('utf-8'),direction=direction.encode('utf-8'))
 
+sunpower_url = 'http://investors.sunpowercorp.com'
+def get_sunpower():
+  regex = re.compile(u'">([^<]+)', re.U)
+  response = urllib2.urlopen(sunpower_url)
+  html = response.read()
+  a, b = html.split('Price')
+  a, b = b.split('Change')
+  price = regex.search(a).group(1).encode('utf-8')
+  a, b = b.split('Day High')
+  delta = regex.search(a).group(1)
+  if re.search('\+', delta):
+    is_neg = False
+  else:
+    is_neg = True
+  delta = re.split('[\+\- ]',delta)[-1]
+  delta = delta.encode('utf-8')
+  a = b.split('Volume')[1].split('clear')[0]
+  vol = regex.search(a).group(1).replace(',','').encode('utf-8')
+  return dict(who='Sunpower',vol=vol,delta=delta,is_neg=is_neg,price=price)
+
+okmetic_url = 'http://ir2.flife.de/data/okmetic/download_e.php?action=download'
+# post to okmetic_url
+# content: ir_format=html&aday=2&amonth=5&ayear=2005&eday=2&emonth=7&eyear=2013
+def get_okmetic():
+  html = urllib2.urlopen(okmetic_url).read()
+  lines = html.split('\n')
+  args = {'ir_format':'html'}
+  a = [i.strip() for i in lines if re.search(u'selected',i) or re.search(u'select.*name',i)]
+  curkey = ''; curval = ''
+  for i in a:
+    if i.find('name=') != -1:
+      curkey = re.search('name="([^"]+)"', i).group(1)
+    else:
+      curval = re.search('value="([^"]+)"', i).group(1)
+      args[curkey] = curval
+  n = datetime.datetime.now()
+  need_keys = ['aday','amonth','ayear','eday','emonth','eyear']
+  [args.setdefault(i,getattr(n, re.sub('^[ae]','',i))) for i in need_keys if not i in args]
+  data = urllib.urlencode(args) # returns like abc=123&def=456&cde=789
+  req = urllib2.Request(okmetic_url, data)
+  response = urllib2.urlopen(req)
+  html = response.read()
+  res = html.split('Turnover')[1].split('tr')[2].replace('\t\t\t','')
+  res = res.split('td>\n')
+  price = re.search('">([^<]+)',res[1]).group(1)
+  vol = re.search('">([^<]+)',res[-3]).group(1).replace(',','')
+  return dict(who='OKMETIC',vol=vol,price=price, delta=u"0", is_neg=False)
+
+memcpower_url = 'http://phx.corporate-ir.net/phoenix.zhtml?c=106680&p=irol-stockQuote'
+def get_memc():
+  response = urllib2.urlopen(memcpower_url)
+  html = response.read()
+  price = re.search(u'ccbnPrice">\$([^<]+)',html).group(1).encode('utf-8')
+  a, b = html.split('(%)')
+  a = b.split('ccbn')[1]
+  if re.search('Neg', a):
+    is_neg = True
+  else:
+    is_neg = False
+  delta = re.search(u'">([^<]+)', a).group(1).encode('utf-8')
+  a = b.split('Volume')[1].split('ccbn')[1]
+  vol = re.search(u'">([^<]+)<', a).group(1).replace(',','').encode('utf-8')
+  return dict(who='MEMC', price=price, delta=delta, vol=vol, is_neg=is_neg)
+
+
 twse_html = u'\n\
 <h6>大盤: {0[direction]} {0[delta]}</h6>\n\
 <h6>加權指數: {0[total]}</h6>'
@@ -182,6 +247,7 @@ result = u'<!doctype html><head>\n\
 <div id="twse_html"></div>\n\
 <div id="stock"></div> \n\
 <div id="emer"></div> \n\
+<div id="foreign"></div> \n\
 </div>'
 
 scr= u'\n\
@@ -240,18 +306,28 @@ xhr3.onreadystatechange = function () { \n\
   } \n\
 }; \n\
 xhr3.send(null); \n\
+var xhr4 = new XMLHttpRequest(); \n\
+xhr4.open(\'GET\', \'/foreign\'); \n\
+xhr4.onreadystatechange = function () { \n\
+  if (xhr4.readyState == 4 && xhr4.status == 200) { \n\
+    var foreign_elem = document.querySelector(\'#foreign\'); \n\
+    foreign_elem.innerHTML = xhr4.responseText; \n\
+    done += 1; \n\
+  } \n\
+}; \n\
+xhr4.send(null); \n\
 reload_color = function(){\n\
   var a = document.querySelector(\'#status\'); \n\
   a.innerHTML = \'<strong><i>Updating Done</i></strong>\'; \n\
   var ps = document.getElementsByClassName("deltaprice");\n\
   for (var i = 0; i < ps.length; ++i) {\n\
-    if (ps[i].textContent[0] == "-") {\n\
+    if (ps[i].textContent[0] == "-" || ps[i].getAttribute("is_neg") == "True") {\n\
       ps[i].style.color = "#ff0000";\n\
     }\n\
   }\n\
 };\n\
 check = function() {\n\
-  if (done == 4) { \n\
+  if (done == 5) { \n\
     reload_color(); \n\
   } else { \n\
     setTimeout(check, 1000); \n\
@@ -277,7 +353,26 @@ legal_result = u'\n\
 <table border="1" who="{0[key]}" all="{0[all]}">\n\
 <tr><th>外資&陸資淨買股數</th><th>投信淨買股數</th><th>自營淨買股數</th></tr>\n\
 <tr><td class="deltaprice">{0[outside]}</td><td class="deltaprice">{0[pitch]}</td><td class="deltaprice">{0[self]}</td></tr>\n\
-</table>'
+</table>\n'
+
+foreign_entry = u'\n\
+<h6>{0[who]}</h6>\n\
+<table border="1">\n\
+<tr><th>成交價</th><td>{0[price]}</td></tr>\n\
+<tr><th>張數</th><td>{0[vol]}</td></tr>\n\
+<tr><th>漲跌幅</th>\n\
+<td class="deltaprice" is_neg="{0[is_neg]}">{0[delta]}</td></tr>\n\
+</table>\n'
+
+
+@app.route('/foreign')
+def get_foreign():
+  okmetic = get_okmetic()
+  memc = get_memc()
+  sunpower = get_sunpower()
+  return foreign_entry.format(okmetic) + \
+      foreign_entry.format(memc) + \
+      foreign_entry.format(sunpower)
 
 @app.route('/twse')
 def get_twse_html():
